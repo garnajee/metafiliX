@@ -3,27 +3,27 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { WatermarkSettings } from '../types';
 
 const MAX_CANVAS_DIMENSION = 4096;
-const ZERO_DATE = new Date(0); // Epoch 0 pour l'anonymat temporel
+const ZERO_DATE = new Date(0);
 
-// Liste de polices standards pour le polymorphisme (Anti-IA)
 const SAFE_FONTS = [
-  'Arial', 
-  'Verdana', 
-  'Times New Roman', 
-  'Courier New', 
-  'Trebuchet MS', 
-  'Georgia', 
-  'Impact', 
-  'Tahoma'
+  'Arial', 'Verdana', 'Times New Roman', 'Courier New', 
+  'Trebuchet MS', 'Georgia', 'Impact', 'Tahoma', 'Arial Black'
 ];
 
 // --- UTILITIES ---
 
 const getJitter = (magnitude: number) => (Math.random() - 0.5) * magnitude;
 
+const hexToRgba = (hex: string, alpha: number) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
 /**
- * Dessine le filigrane avec des techniques anti-IA et anti-suppression.
- * Version 2.0 : Correction de couverture géométrique + Interférences Organiques
+ * Version 6.0 "Visible & Secure"
+ * Retour au remplissage lisible + Texture Hachurée en superposition
  */
 const drawSecureWatermarkOnCanvas = (
   ctx: CanvasRenderingContext2D, 
@@ -33,115 +33,128 @@ const drawSecureWatermarkOnCanvas = (
 ) => {
     const { text, color, opacity, size, security } = settings;
     
-    // 1. Définition de la taille de base
+    // Taille de base légèrement augmentée pour lisibilité
     const baseFontSize = Math.max(width, height) * 0.04 * size;
     
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // 2. Mode de Fusion "Multiply"
-    // Incruste l'encre dans le papier. Rend la suppression par soustraction de couleur difficile.
+    // Mode d'incrustation
     ctx.globalCompositeOperation = 'multiply';
 
-    // Mesures pour la grille
     ctx.font = `bold ${baseFontSize}px Arial`;
     const textMetrics = ctx.measureText(text);
     const textWidth = textMetrics.width;
     const textHeight = baseFontSize;
     
-    // Espacement dynamique
     const horizontalSpacing = textWidth * 2;
     const verticalSpacing = textHeight * 4;
 
-    // 3. CORRECTION DE COUVERTURE (GEOMETRIE)
-    // Problème précédent : La diagonale simple laissait des coins vides après rotation.
-    // Solution : On définit une zone de rendu massive (1.5x la plus grande dimension)
-    // et on dessine par rapport au CENTRE de l'image.
-    const maxDim = Math.max(width, height) * 1.5;
+    // Géométrie massive (Correction "Trou")
+    const diagonal = Math.sqrt(width * width + height * height);
+    const limit = diagonal * 1.5;
 
     ctx.save();
-    
-    // On déplace l'origine au centre de l'image
     ctx.translate(width / 2, height / 2);
-    // On effectue la rotation globale
     ctx.rotate(-45 * Math.PI / 180);
 
-    // On boucle de -Limite à +Limite par rapport au centre (0,0)
-    for (let y = -maxDim; y < maxDim; y += verticalSpacing) {
-        for (let x = -maxDim; x < maxDim; x += horizontalSpacing) {
+    const xCount = Math.ceil(limit / horizontalSpacing);
+    const yCount = Math.ceil(limit / verticalSpacing);
+
+    for (let j = -yCount; j <= yCount; j++) {
+        for (let i = -xCount; i <= xCount; i++) {
+            
+            const baseX = i * horizontalSpacing;
+            const baseY = j * verticalSpacing;
+            const rowOffset = (Math.abs(j) % 2 === 1) ? horizontalSpacing / 2 : 0;
             
             ctx.save();
 
-            // --- JITTERS (Chaos Géométrique) ---
-            // Décalages aléatoires pour casser la grille parfaite
             const jX = security.scramble ? getJitter(textWidth * 0.3) : 0;
             const jY = security.scramble ? getJitter(textHeight * 0.3) : 0;
-            const jRot = security.scramble ? getJitter(0.15) : 0; // +/- quelques degrés
-            const scaleVar = security.scramble ? 1 + getJitter(0.2) : 1; // Variation taille +/- 10%
+            const jRot = security.scramble ? getJitter(0.15) : 0; 
+            const scaleVar = security.scramble ? 1 + getJitter(0.15) : 1;
 
-            // Application des transformations locales
-            ctx.translate(x + jX, y + jY);
+            ctx.translate(baseX + rowOffset + jX, baseY + jY);
             ctx.rotate(jRot);
             ctx.scale(scaleVar, scaleVar);
 
-            // --- ANTI-IA 1: POLYMORPHISME DE POLICE ---
-            // On change de police à chaque mot pour empêcher l'IA d'apprendre la forme des lettres
             const randomFont = security.scramble 
                 ? SAFE_FONTS[Math.floor(Math.random() * SAFE_FONTS.length)] 
                 : 'Arial';
             ctx.font = `bold ${baseFontSize}px ${randomFont}, sans-serif`;
 
-            // --- ANTI-IA 2: VARIANCE D'OPACITÉ LOCALE ---
-            // L'opacité varie de +/- 15% autour de la valeur choisie.
-            // Empêche les algo de soustraction uniforme.
+            // Variance d'opacité
             let localOpacity = opacity;
             if (security.scramble) {
-                localOpacity = Math.max(0.05, Math.min(1, opacity + getJitter(0.3)));
+                localOpacity = Math.max(0.1, Math.min(1, opacity + getJitter(0.2)));
             }
 
-            ctx.fillStyle = color;
-            ctx.globalAlpha = localOpacity;
+            // 1. DESSIN DU TEXTE PRINCIPAL (LISIBLE)
+            // On utilise un remplissage solide (légèrement dégradé) pour garantir la lecture
+            const gradient = ctx.createLinearGradient(0, -textHeight/2, 0, textHeight/2);
+            gradient.addColorStop(0, hexToRgba(color, localOpacity));
+            gradient.addColorStop(0.5, hexToRgba(color, Math.max(0, localOpacity - 0.1)));
+            gradient.addColorStop(1, hexToRgba(color, localOpacity));
             
-            // Dessin du texte
+            ctx.fillStyle = gradient;
             ctx.fillText(text, 0, 0);
 
-            // --- ANTI-IA 3: INTERFÉRENCES ORGANIQUES ---
-            if (security.addNoise && opacity > 0.05) {
-                // On repasse en mode normal pour dessiner par dessus le texte (effet rayure)
-                ctx.globalCompositeOperation = 'source-over'; 
+            // 2. TEXTURE HACHURÉE EN SURIMPRESSION (ANTI-IA)
+            // On dessine des hachures fines *par-dessus* le texte existant
+            // Cela crée du "bruit" structurel sans effacer la lettre
+            if (security.addNoise) {
+                ctx.globalCompositeOperation = 'source-over'; // Dessin normal par dessus
                 
-                ctx.lineWidth = 0.5 + Math.random();
-                ctx.strokeStyle = color;
-                ctx.globalAlpha = localOpacity * 0.6;
-                
+                // On utilise le texte comme masque (clip) pour ne dessiner les rayures QUE dans les lettres
                 ctx.beginPath();
-                // Courbe de Bézier aléatoire qui traverse le texte (imite une fibre ou un cheveu)
-                // Au lieu d'une ligne droite mathématique facile à détecter.
-                const startY = getJitter(textHeight/2);
-                const endY = getJitter(textHeight/2);
+                // Note: fillText ne crée pas de chemin, on utilise une astuce de clipping simple ou on dessine par dessus
+                // Ici on dessine simplement des lignes diagonales fines qui traversent la zone du texte
                 
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = color;
+                ctx.globalAlpha = localOpacity * 0.3; // Rayures discrètes
+
+                const hatchSpacing = 6; // Espacement des rayures (pixels)
+                // On couvre la zone du mot
+                for (let k = -textWidth/2; k < textWidth/2; k += hatchSpacing) {
+                    ctx.beginPath();
+                    // Lignes diagonales
+                    ctx.moveTo(k, -textHeight/2);
+                    ctx.lineTo(k - 10, textHeight/2);
+                    ctx.stroke();
+                }
+                
+                ctx.globalCompositeOperation = 'multiply'; // Retour fusion
+            }
+
+            // 3. CONTOUR FIN (GHOST STROKE)
+            // Aide à la lisibilité si le fond est complexe et piège l'IA
+            if (security.addNoise) {
+                ctx.lineWidth = 0.5;
+                ctx.strokeStyle = hexToRgba(color, localOpacity * 0.8);
+                ctx.strokeText(text, 0, 0);
+            }
+
+            // 4. MICRO-COUPURES (Moins nombreuses, plus stratégiques)
+            if (security.addNoise) {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = color; // Couleur du texte pour "couper"
+                ctx.globalAlpha = localOpacity * 0.8;
+
+                // Une seule grande courbe traversante (style "Signature")
+                ctx.beginPath();
+                const startY = getJitter(textHeight/3);
+                const endY = getJitter(textHeight/3);
                 ctx.moveTo(-textWidth/1.5, startY);
                 ctx.bezierCurveTo(
-                    -textWidth/3, startY - textHeight, // Point de contrôle haut
-                    textWidth/3, endY + textHeight,    // Point de contrôle bas
+                    -textWidth/3, startY - textHeight, 
+                    textWidth/3, endY + textHeight,    
                     textWidth/1.5, endY
                 );
                 ctx.stroke();
 
-                // "Ink Splatter" (Taches d'encre)
-                // Ajoute des micro-points aléatoires pour simuler du bruit d'impression
-                if (Math.random() > 0.7) {
-                    const dotX = (Math.random() - 0.5) * textWidth;
-                    const dotY = (Math.random() - 0.5) * textHeight;
-                    const dotRadius = Math.random() * 1.5; // 0 à 1.5px
-                    
-                    ctx.beginPath();
-                    ctx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
-                    ctx.fillStyle = color;
-                    ctx.fill();
-                }
-
-                // Retour au mode multiply pour le prochain texte
                 ctx.globalCompositeOperation = 'multiply';
             }
 
@@ -149,20 +162,17 @@ const drawSecureWatermarkOnCanvas = (
         }
     }
     
-    // Restauration du contexte après la rotation globale
     ctx.restore();
 
-    // 4. BRUIT NUMÉRIQUE GLOBAL (GRAIN)
-    // Ajoute une couche de neige statique invisible à l'œil nu mais destructrice pour les IA
+    // Bruit Global
     if (security.addNoise) {
         ctx.globalCompositeOperation = 'source-over';
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
-        const noiseIntensity = 10; 
+        const noiseIntensity = 10;
 
         for (let i = 0; i < data.length; i += 4) {
-            // Bruit léger sur 50% des pixels
-            if (Math.random() > 0.5) {
+            if (Math.random() > 0.6) {
                 const noise = (Math.random() - 0.5) * noiseIntensity;
                 data[i] = Math.max(0, Math.min(255, data[i] + noise));
                 data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
@@ -173,9 +183,6 @@ const drawSecureWatermarkOnCanvas = (
     }
 };
 
-/**
- * Rendu d'une page PDF vers Blob Image (Rasterisation)
- */
 const rasterizePdfPageToBlob = async (pdfPage: any, scale: number, settings: WatermarkSettings): Promise<Blob> => {
     const viewport = pdfPage.getViewport({ scale });
     
@@ -195,15 +202,12 @@ const rasterizePdfPageToBlob = async (pdfPage: any, scale: number, settings: Wat
     drawSecureWatermarkOnCanvas(ctx, canvas.width, canvas.height, settings);
 
     return new Promise((resolve, reject) => {
-        // JPEG haute qualité
         canvas.toBlob(blob => {
             if (blob) resolve(blob);
             else reject(new Error("Rasterization failed"));
         }, 'image/jpeg', 0.95);
     });
 };
-
-// --- CORE FUNCTIONS ---
 
 export const watermarkImage = async (file: File, settings: WatermarkSettings): Promise<Blob> => {
   return new Promise((resolve, reject) => {
@@ -214,7 +218,6 @@ export const watermarkImage = async (file: File, settings: WatermarkSettings): P
         let width = img.width;
         let height = img.height;
 
-        // Limite de sécurité mémoire
         if (width > MAX_CANVAS_DIMENSION || height > MAX_CANVAS_DIMENSION) {
              const ratio = Math.min(MAX_CANVAS_DIMENSION / width, MAX_CANVAS_DIMENSION / height);
              width = Math.floor(width * ratio);
@@ -240,7 +243,6 @@ export const watermarkImage = async (file: File, settings: WatermarkSettings): P
           else reject(new Error("Image Export Failed"));
         }, outFormat, 0.95);
       };
-      
       img.onerror = () => reject(new Error("Image Load Error"));
       img.src = event.target?.result as string;
     };
@@ -249,16 +251,13 @@ export const watermarkImage = async (file: File, settings: WatermarkSettings): P
 };
 
 export const convertImageToPdf = async (imageBlob: Blob, removeMetadata: boolean): Promise<Blob> => {
-    // CLEAN SLATE PROTOCOL
     const pdfDoc = await PDFDocument.create();
     
     if (removeMetadata) {
         pdfDoc.setTitle('');
         pdfDoc.setAuthor('');
-        pdfDoc.setSubject('');
         pdfDoc.setProducer('MetafiliX Secure Engine'); 
         pdfDoc.setCreator('');
-        pdfDoc.setKeywords([]);
         pdfDoc.setCreationDate(ZERO_DATE);
         pdfDoc.setModificationDate(ZERO_DATE);
     }
@@ -284,16 +283,11 @@ export const convertImageToPdf = async (imageBlob: Blob, removeMetadata: boolean
     return new Blob([pdfBytes], { type: 'application/pdf' });
 };
 
-/**
- * Fonction principale pour PDF.
- * Force la rasterisation pour une sécurité maximale.
- */
 export const watermarkPdf = async (file: File, settings: WatermarkSettings): Promise<Blob> => {
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
     
-    // CLEAN SLATE : Nouveau PDF vierge
     const newPdf = await PDFDocument.create();
 
     if (settings.removeMetadata) {
@@ -307,8 +301,6 @@ export const watermarkPdf = async (file: File, settings: WatermarkSettings): Pro
 
     for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
-        
-        // Scale 2.0 = ~144 DPI (Compromis Qualité/Vitesse)
         const scale = 2.0; 
         
         const pageImageBlob = await rasterizePdfPageToBlob(page, scale, settings);
