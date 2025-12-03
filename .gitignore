@@ -81,6 +81,8 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+dist-ssr
+*.local
 
 # Gatsby files
 .cache/
@@ -90,6 +92,17 @@ dist
 
 # vuepress build output
 .vuepress/dist
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # vuepress v2.x temp and cache directory
 .temp

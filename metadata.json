@@ -1,0 +1,5 @@
+{
+  "name": "Filigrane Local",
+  "description": "Ajoutez un filigrane sur vos documents (PDF, JPG, PNG) localement dans votre navigateur. 100% privé, aucun transfert vers un serveur.",
+  "requestFramePermissions": []
+}
