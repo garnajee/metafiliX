@@ -3,6 +3,7 @@ import { ProcessedFile, WatermarkSettings } from './types';
 import { DEFAULT_SETTINGS } from './constants';
 import { watermarkImage, watermarkPdf, convertImageToPdf } from './services/watermarkService';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import SettingsPanel from './components/SettingsPanel';
 import Dropzone from './components/Dropzone';
@@ -10,8 +11,8 @@ import FileList from './components/FileList';
 import Footer from './components/Footer';
 import { ShieldCheck, Moon, Sun, Lock } from 'lucide-react';
 
-// Configuration Worker PDF.js (CDN compatible avec la version installée)
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.mjs';
+// Initialisation du worker avec le fichier local
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
 
@@ -21,7 +22,7 @@ function App() {
     ...DEFAULT_SETTINGS,
     text: "Document exclusivement destiné à la location",
     security: {
-        rasterize: true, // Sécurité maximale par défaut
+        rasterize: true,
         addNoise: true,
         scramble: true
     }
@@ -55,7 +56,7 @@ function App() {
           blob = await convertImageToPdf(blob, currentSettings.removeMetadata);
         }
       } else {
-        // PDF processing (Always Rasterized/Secure now based on service update)
+        // PDF processing
         blob = await watermarkPdf(fileEntry.originalFile, currentSettings);
       }
 
@@ -105,6 +106,7 @@ function App() {
     });
   };
   
+  // Debounce processing
   useEffect(() => {
     const timer = setTimeout(() => {
         if (files.length > 0) {

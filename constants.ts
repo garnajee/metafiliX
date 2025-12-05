@@ -2,7 +2,7 @@ import { WatermarkSettings } from "./types";
 
 export const DEFAULT_SETTINGS: WatermarkSettings = {
   text: "Document exclusivement destiné à la location",
-  opacity: 0.25,
+  opacity: 0.30,
   color: "#000000",
   size: 1, 
   outputFormat: 'original',
