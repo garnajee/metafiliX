@@ -12,9 +12,6 @@ import FileList from './components/FileList';
 import Footer from './components/Footer';
 import { ShieldCheck, Moon, Sun, Lock } from 'lucide-react';
 
-// Initialisation du worker avec le fichier local
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
-
 const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
 
 function App() {
