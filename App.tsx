@@ -3,7 +3,6 @@ import { ProcessedFile, WatermarkSettings } from './types';
 import { DEFAULT_SETTINGS } from './constants';
 import { watermarkImage, watermarkPdf, convertImageToPdf } from './services/watermarkService';
 import * as pdfjsLib from 'pdfjs-dist';
-//import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
 
 import SettingsPanel from './components/SettingsPanel';
