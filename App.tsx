@@ -3,7 +3,8 @@ import { ProcessedFile, WatermarkSettings } from './types';
 import { DEFAULT_SETTINGS } from './constants';
 import { watermarkImage, watermarkPdf, convertImageToPdf } from './services/watermarkService';
 import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+//import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 import SettingsPanel from './components/SettingsPanel';
 import Dropzone from './components/Dropzone';
