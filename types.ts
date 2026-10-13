@@ -1,10 +1,11 @@
 export interface ProcessedFile {
   id: string;
   originalFile: File;
-  previewUrl: string | null; // For images, the original. For PDF, maybe a thumbnail or icon.
+  previewUrl: string | null;
   processedBlob: Blob | null;
-  processedUrl: string | null;
   status: 'pending' | 'processing' | 'done' | 'error';
+  processingRevision: number;
+  watermarkSeed: string;
   errorMessage?: string;
   type: 'image' | 'pdf';
 }
@@ -12,9 +13,9 @@ export interface ProcessedFile {
 export type OutputFormat = 'original' | 'pdf';
 
 export interface SecuritySettings {
-  rasterize: boolean; // "Secure Mode": Converts PDF to Image to prevent vector editing
-  addNoise: boolean;  // Adds random interference to confuse AI removers
-  scramble: boolean;  // Jitter/Random positioning
+  rasterize: boolean; // Reinforced PDF mode: rasterizes every page.
+  addNoise: boolean;  // Adds structured texture inside watermark glyphs.
+  scramble: boolean;  // Enables seeded geometric variations.
 }
 
 export interface WatermarkSettings {

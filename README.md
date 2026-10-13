@@ -1,7 +1,7 @@
 <div align="center">
 
 # MetafiliX
-### The Ultimate Forensic & Anti-AI Watermarking Solution
+### Local, reinforced watermarking for PDF and images
 
 [![License: MIT](https://img.shields.io/github/license/garnajee/formacheck)](https://opensource.org/licenses/MIT)
 [![Privacy: Local](https://img.shields.io/badge/Privacy-100%25%20Local-green.svg)](https://github.com/yourusername/metafilix)
@@ -10,7 +10,7 @@
 
 <p align="center">
   <b>MetafiliX</b> is a web app designed to add watermarks on PDF and images (for now). Anti-AI secuirty features.<br/>
-  Unlike standard tools that simply overlay text, MetafiliX <b>fuses</b>, <b>rasterizes</b>, and <b>noises</b> your documents to make watermarks mathematically complex to remove, even for the most advanced <i>Generative Fill</i> (In-painting) algorithms.
+  MetafiliX can preserve selectable PDF text in Standard mode or fuse the watermark into page pixels in Reinforced mode. These techniques increase deterrence and make automated removal more difficult without claiming that any watermark is impossible to remove.
 </p>
 
 </div>
@@ -31,23 +31,19 @@
 
 This is where MetafiliX stands out. I employ a **"Defense in Depth"** strategy to protect your documents.
 
-### 1. Mandatory Rasterization ("Armored" Mode)
+### 1. Optional Rasterization (Reinforced Mode)
 Standard vector watermarks (added by Adobe Acrobat or basic libraries) are distinct layers. A single click is enough to delete them.
-*   **My Solution:** MetafiliX converts every page of your PDF into a high-resolution image (Rasterization). The text is "burned" into the document's pixels. It no longer exists as a text object.
+*   **Standard mode:** Keeps the original PDF content and selectable text, then adds a graphical watermark layer.
+*   **Reinforced mode:** Converts every page into a high-resolution image and burns the watermark into the resulting pixels.
 
 ### 2. Anti-AI & Anti-Inpainting Strategies
 AI tools attempt to reconstruct the image underneath the watermark by analyzing patterns and uniform colors. I try to destroy this capability:
 
-*   **🧬 Font Polymorphism:** The system randomly switches fonts (*Arial, Verdana, Times, Courier, Impact...*) for every single repetition of the word. The AI cannot "learn" a consistent letter shape to reconstruct.
-*   **🧪 "Multiply" Blend Mode:** The text isn't just placed *on* the image; it is embedded *into* the image colors (subtractive mixing).
-*   **🌈 Gradient Fill:** The text is not a solid color. It contains a vertical micro-gradient, breaking the mathematical consistency required for color subtraction algorithms.
-*   **🕸️ Cross-Hatching Texture:** A fine diagonal line texture is drawn *over* the text. AI interprets this as complex structural detail rather than a clean area to erase.
-*   **👻 Ghost Strokes:** A faint, slightly offset outline is drawn around the text to confuse edge-detection algorithms.
-*   **〰️ Geometric Chaos (Jitter):** 
-    *   Random Position (X/Y).
-    *   Random Rotation (+/- degrees).
-    *   Random Scale (Variable size).
-*   **📉 Organic Interference:** Random Bezier curves (simulating hairs or fibers) and "ink splatters" traverse the text to break linearity.
+*   **Multi-scale pattern:** Two interleaved watermark grids make one-pass masking less effective.
+*   **Per-file variation:** Position, angle, scale and opacity use a unique seed for every uploaded file and page.
+*   **Adaptive contrast:** Light or dark outlines are selected from local document luminance.
+*   **Glyph texture:** Cross-hatching is clipped to the letters instead of degrading the entire source image.
+*   **Readable layout:** Long phrases are wrapped and resized automatically without clipping words.
 
 ### 3. Total Geometric Coverage
 I utilize a "Brute Force" geometric calculation to ensure that no corner of the document (especially on square or panoramic images) remains unwatermarked after the 45° rotation.
@@ -104,7 +100,7 @@ The application will be accessible at `http://localhost:3000`.
 
 ## ⚠️ Legal Disclaimer
 
-While MetafiliX employs advanced techniques to prevent watermark removal, no system is 100% infallible against a human expert with unlimited time or future, non-existent AI models. MetafiliX offers a very high level of **deterrent and forensic protection**, making the task economically and technically unviable for the vast majority of malicious actors.
+No visible watermark is invulnerable to a determined editor or modern inpainting system. MetafiliX provides local processing, visible deterrence and a reinforced raster mode; it does not guarantee that removal is impossible.
 
 ## License
 

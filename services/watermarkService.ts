@@ -1,324 +1,468 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import { WatermarkSettings } from '../types';
+import {
+  computeWatermarkTextLayout,
+  createSeededRandom,
+  seededVariation,
+  WatermarkTextLayout,
+} from './watermarkLayout';
 
 const MAX_CANVAS_DIMENSION = 4096;
+const LUMINANCE_MAP_SIZE = 96;
 const ZERO_DATE = new Date(0);
+const WATERMARK_FONT = 'Arial, Helvetica, sans-serif';
 
-const SAFE_FONTS = [
-  'Arial', 'Verdana', 'Times New Roman', 'Courier New', 
-  'Trebuchet MS', 'Georgia', 'Impact', 'Tahoma', 'Arial Black'
+export interface LuminanceMap {
+  width: number;
+  height: number;
+  values: Float32Array;
+}
+
+interface WatermarkLayer {
+  angle: number;
+  fontScale: number;
+  opacityScale: number;
+  spacingScale: number;
+  offsetScale: number;
+}
+
+const WATERMARK_LAYERS: WatermarkLayer[] = [
+  { angle: -Math.PI / 4, fontScale: 1, opacityScale: 1, spacingScale: 1, offsetScale: 0 },
+  { angle: -Math.PI / 7, fontScale: 0.72, opacityScale: 0.52, spacingScale: 1.3, offsetScale: 0.55 },
 ];
 
-// --- UTILITIES ---
-
-const getJitter = (magnitude: number) => (Math.random() - 0.5) * magnitude;
-
-const hexToRgba = (hex: string, alpha: number) => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+const applyMetadataPolicy = (pdfDoc: PDFDocument, removeMetadata: boolean) => {
+  if (!removeMetadata) return;
+  pdfDoc.setTitle('');
+  pdfDoc.setAuthor('');
+  pdfDoc.setSubject('');
+  pdfDoc.setKeywords([]);
+  pdfDoc.setProducer('MetafiliX');
+  pdfDoc.setCreator('');
+  pdfDoc.setCreationDate(ZERO_DATE);
+  pdfDoc.setModificationDate(ZERO_DATE);
 };
 
-/**
- * Version 6.0 "Visible & Secure"
- * Retour au remplissage lisible + Texture Hachurée en superposition
- */
-const drawSecureWatermarkOnCanvas = (
-  ctx: CanvasRenderingContext2D, 
-  width: number, 
-  height: number, 
-  settings: WatermarkSettings
+const canvasToBlob = (
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number
+): Promise<Blob> => new Promise((resolve, reject) => {
+  canvas.toBlob(blob => {
+    if (blob) resolve(blob);
+    else reject(new Error('Échec de l’export du canvas'));
+  }, type, quality);
+});
+
+const pdfBytesToBlob = (bytes: Uint8Array): Blob => {
+  const copy = Uint8Array.from(bytes);
+  return new Blob([copy.buffer], { type: 'application/pdf' });
+};
+
+const createLuminanceMap = (
+  canvas: HTMLCanvasElement,
+  width = LUMINANCE_MAP_SIZE
+): LuminanceMap | null => {
+  const ratio = canvas.height / Math.max(1, canvas.width);
+  const height = Math.max(1, Math.round(width * ratio));
+  const analysisCanvas = document.createElement('canvas');
+  analysisCanvas.width = width;
+  analysisCanvas.height = height;
+  const analysisContext = analysisCanvas.getContext('2d', { willReadFrequently: true });
+  if (!analysisContext) return null;
+
+  analysisContext.drawImage(canvas, 0, 0, width, height);
+  const pixels = analysisContext.getImageData(0, 0, width, height).data;
+  const values = new Float32Array(width * height);
+
+  for (let index = 0; index < values.length; index += 1) {
+    const pixelIndex = index * 4;
+    const alpha = pixels[pixelIndex + 3] / 255;
+    const luminance = (
+      0.2126 * pixels[pixelIndex]
+      + 0.7152 * pixels[pixelIndex + 1]
+      + 0.0722 * pixels[pixelIndex + 2]
+    ) / 255;
+    values[index] = alpha < 0.05 ? 1 : luminance;
+  }
+
+  return { width, height, values };
+};
+
+const sampleLuminance = (
+  map: LuminanceMap | null,
+  x: number,
+  y: number,
+  canvasWidth: number,
+  canvasHeight: number
+): number => {
+  if (!map) return 0.85;
+  const mapX = Math.max(0, Math.min(map.width - 1, Math.round((x / canvasWidth) * (map.width - 1))));
+  const mapY = Math.max(0, Math.min(map.height - 1, Math.round((y / canvasHeight) * (map.height - 1))));
+  return map.values[mapY * map.width + mapX] ?? 0.85;
+};
+
+const createTextTile = (
+  layout: WatermarkTextLayout,
+  settings: WatermarkSettings,
+  outlineColor: string
+): HTMLCanvasElement => {
+  const padding = Math.max(4, layout.fontSize * 0.32);
+  const tile = document.createElement('canvas');
+  tile.width = Math.max(1, Math.ceil(layout.width + padding * 2));
+  tile.height = Math.max(1, Math.ceil(layout.height + padding * 2));
+  const context = tile.getContext('2d');
+  if (!context) throw new Error('Contexte canvas indisponible');
+
+  context.font = `700 ${layout.fontSize}px ${WATERMARK_FONT}`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.lineJoin = 'round';
+  context.lineWidth = Math.max(1, layout.fontSize * 0.08);
+  context.strokeStyle = outlineColor;
+  context.fillStyle = settings.color;
+
+  layout.lines.forEach((line, index) => {
+    const y = padding + layout.lineHeight * (index + 0.5);
+    context.strokeText(line, tile.width / 2, y);
+    context.fillText(line, tile.width / 2, y);
+  });
+
+  if (settings.security.addNoise) {
+    context.save();
+    context.globalCompositeOperation = 'source-atop';
+    context.strokeStyle = outlineColor;
+    context.globalAlpha = 0.28;
+    context.lineWidth = Math.max(0.75, layout.fontSize * 0.035);
+    const spacing = Math.max(5, layout.fontSize * 0.28);
+    for (let x = -tile.height; x < tile.width + tile.height; x += spacing) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x - tile.height, tile.height);
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  return tile;
+};
+
+const getCanvasPoint = (
+  x: number,
+  y: number,
+  angle: number,
+  width: number,
+  height: number
+) => ({
+  x: width / 2 + Math.cos(angle) * x - Math.sin(angle) * y,
+  y: height / 2 + Math.sin(angle) * x + Math.cos(angle) * y,
+});
+
+export const drawSecureWatermarkOnCanvas = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  settings: WatermarkSettings,
+  seed: string,
+  suppliedLuminanceMap?: LuminanceMap | null
 ) => {
-    const { text, color, opacity, size, security } = settings;
-    
-    // Taille de base légèrement augmentée pour lisibilité
-    const baseFontSize = Math.max(width, height) * 0.04 * size;
-    
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+  if (!settings.text.trim() || width <= 0 || height <= 0) return;
 
-    // Mode d'incrustation
-    ctx.globalCompositeOperation = 'multiply';
+  const luminanceMap = suppliedLuminanceMap === undefined
+    ? createLuminanceMap(context.canvas)
+    : suppliedLuminanceMap;
+  const shorterSide = Math.min(width, height);
+  const longerSide = Math.max(width, height);
+  const diagonal = Math.hypot(width, height);
 
-    ctx.font = `bold ${baseFontSize}px Arial`;
-    const textMetrics = ctx.measureText(text);
-    const textWidth = textMetrics.width;
-    const textHeight = baseFontSize;
-    
-    const horizontalSpacing = textWidth * 2;
-    const verticalSpacing = textHeight * 4;
-
-    // Géométrie massive (Correction "Trou")
-    const diagonal = Math.sqrt(width * width + height * height);
-    const limit = diagonal * 1.5;
-
-    ctx.save();
-    ctx.translate(width / 2, height / 2);
-    ctx.rotate(-45 * Math.PI / 180);
-
-    const xCount = Math.ceil(limit / horizontalSpacing);
-    const yCount = Math.ceil(limit / verticalSpacing);
-
-    for (let j = -yCount; j <= yCount; j++) {
-        for (let i = -xCount; i <= xCount; i++) {
-            
-            const baseX = i * horizontalSpacing;
-            const baseY = j * verticalSpacing;
-            const rowOffset = (Math.abs(j) % 2 === 1) ? horizontalSpacing / 2 : 0;
-            
-            ctx.save();
-
-            const jX = security.scramble ? getJitter(textWidth * 0.3) : 0;
-            const jY = security.scramble ? getJitter(textHeight * 0.3) : 0;
-            const jRot = security.scramble ? getJitter(0.15) : 0; 
-            const scaleVar = security.scramble ? 1 + getJitter(0.15) : 1;
-
-            ctx.translate(baseX + rowOffset + jX, baseY + jY);
-            ctx.rotate(jRot);
-            ctx.scale(scaleVar, scaleVar);
-
-            const randomFont = security.scramble 
-                ? SAFE_FONTS[Math.floor(Math.random() * SAFE_FONTS.length)] 
-                : 'Arial';
-            ctx.font = `bold ${baseFontSize}px ${randomFont}, sans-serif`;
-
-            // Variance d'opacité
-            let localOpacity = opacity;
-            if (security.scramble) {
-                localOpacity = Math.max(0.1, Math.min(1, opacity + getJitter(0.2)));
-            }
-
-            // 1. DESSIN DU TEXTE PRINCIPAL (LISIBLE)
-            // On utilise un remplissage solide (légèrement dégradé) pour garantir la lecture
-            const gradient = ctx.createLinearGradient(0, -textHeight/2, 0, textHeight/2);
-            gradient.addColorStop(0, hexToRgba(color, localOpacity));
-            gradient.addColorStop(0.5, hexToRgba(color, Math.max(0, localOpacity - 0.1)));
-            gradient.addColorStop(1, hexToRgba(color, localOpacity));
-            
-            ctx.fillStyle = gradient;
-            ctx.fillText(text, 0, 0);
-
-            // 2. TEXTURE HACHURÉE EN SURIMPRESSION (ANTI-IA)
-            // On dessine des hachures fines *par-dessus* le texte existant
-            // Cela crée du "bruit" structurel sans effacer la lettre
-            if (security.addNoise) {
-                ctx.globalCompositeOperation = 'source-over'; // Dessin normal par dessus
-                
-                // On utilise le texte comme masque (clip) pour ne dessiner les rayures QUE dans les lettres
-                ctx.beginPath();
-                // Note: fillText ne crée pas de chemin, on utilise une astuce de clipping simple ou on dessine par dessus
-                // Ici on dessine simplement des lignes diagonales fines qui traversent la zone du texte
-                
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = color;
-                ctx.globalAlpha = localOpacity * 0.3; // Rayures discrètes
-
-                const hatchSpacing = 6; // Espacement des rayures (pixels)
-                // On couvre la zone du mot
-                for (let k = -textWidth/2; k < textWidth/2; k += hatchSpacing) {
-                    ctx.beginPath();
-                    // Lignes diagonales
-                    ctx.moveTo(k, -textHeight/2);
-                    ctx.lineTo(k - 10, textHeight/2);
-                    ctx.stroke();
-                }
-                
-                ctx.globalCompositeOperation = 'multiply'; // Retour fusion
-            }
-
-            // 3. CONTOUR FIN (GHOST STROKE)
-            // Aide à la lisibilité si le fond est complexe et piège l'IA
-            if (security.addNoise) {
-                ctx.lineWidth = 0.5;
-                ctx.strokeStyle = hexToRgba(color, localOpacity * 0.8);
-                ctx.strokeText(text, 0, 0);
-            }
-
-            // 4. MICRO-COUPURES (Moins nombreuses, plus stratégiques)
-            if (security.addNoise) {
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = color; // Couleur du texte pour "couper"
-                ctx.globalAlpha = localOpacity * 0.8;
-
-                // Une seule grande courbe traversante (style "Signature")
-                ctx.beginPath();
-                const startY = getJitter(textHeight/3);
-                const endY = getJitter(textHeight/3);
-                ctx.moveTo(-textWidth/1.5, startY);
-                ctx.bezierCurveTo(
-                    -textWidth/3, startY - textHeight, 
-                    textWidth/3, endY + textHeight,    
-                    textWidth/1.5, endY
-                );
-                ctx.stroke();
-
-                ctx.globalCompositeOperation = 'multiply';
-            }
-
-            ctx.restore();
-        }
-    }
-    
-    ctx.restore();
-
-    // Bruit Global
-    if (security.addNoise) {
-        ctx.globalCompositeOperation = 'source-over';
-        const imageData = ctx.getImageData(0, 0, width, height);
-        const data = imageData.data;
-        const noiseIntensity = 10;
-
-        for (let i = 0; i < data.length; i += 4) {
-            if (Math.random() > 0.6) {
-                const noise = (Math.random() - 0.5) * noiseIntensity;
-                data[i] = Math.max(0, Math.min(255, data[i] + noise));
-                data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
-                data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
-            }
-        }
-        ctx.putImageData(imageData, 0, 0);
-    }
-};
-
-const rasterizePdfPageToBlob = async (pdfPage: any, scale: number, settings: WatermarkSettings): Promise<Blob> => {
-    const viewport = pdfPage.getViewport({ scale });
-    
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error("Canvas context failed");
-
-    const renderContext = {
-        canvasContext: ctx,
-        viewport: viewport,
+  WATERMARK_LAYERS.forEach((layer, layerIndex) => {
+    const baseFontSize = longerSide * 0.035 * settings.size * layer.fontScale;
+    const minFontSize = Math.max(8, shorterSide * 0.018 * layer.fontScale);
+    const measure = (value: string, fontSize: number) => {
+      context.font = `700 ${fontSize}px ${WATERMARK_FONT}`;
+      return context.measureText(value);
     };
-    await pdfPage.render(renderContext).promise;
-
-    drawSecureWatermarkOnCanvas(ctx, canvas.width, canvas.height, settings);
-
-    return new Promise((resolve, reject) => {
-        canvas.toBlob(blob => {
-            if (blob) resolve(blob);
-            else reject(new Error("Rasterization failed"));
-        }, 'image/jpeg', 0.95);
+    const layout = computeWatermarkTextLayout({
+      text: settings.text,
+      baseFontSize,
+      minFontSize,
+      maxWidth: shorterSide * 0.62,
+      maxHeight: shorterSide * 0.3,
+      measure,
     });
-};
 
-export const watermarkImage = async (file: File, settings: WatermarkSettings): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
+    if (layout.lines.length === 0) return;
 
-        if (width > MAX_CANVAS_DIMENSION || height > MAX_CANVAS_DIMENSION) {
-             const ratio = Math.min(MAX_CANVAS_DIMENSION / width, MAX_CANVAS_DIMENSION / height);
-             width = Math.floor(width * ratio);
-             height = Math.floor(height * ratio);
-        }
+    const lightTile = createTextTile(layout, settings, '#ffffff');
+    const darkTile = createTextTile(layout, settings, '#0f172a');
+    const horizontalSpacing = Math.max(
+      lightTile.width * 1.35,
+      shorterSide * 0.34
+    ) * layer.spacingScale;
+    const verticalSpacing = Math.max(
+      lightTile.height * 1.85,
+      layout.fontSize * 4.2
+    ) * layer.spacingScale;
+    const limit = diagonal * 0.85;
+    const xCount = Math.ceil(limit / horizontalSpacing) + 1;
+    const yCount = Math.ceil(limit / verticalSpacing) + 1;
+    const random = createSeededRandom(`${seed}:layer:${layerIndex}`);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        
-        if (!ctx) {
-          reject(new Error("Canvas Context Failed"));
-          return;
-        }
+    context.save();
+    context.translate(width / 2, height / 2);
+    context.rotate(layer.angle);
+    context.globalCompositeOperation = 'source-over';
 
-        ctx.drawImage(img, 0, 0, width, height);
-        drawSecureWatermarkOnCanvas(ctx, width, height, settings);
+    for (let row = -yCount; row <= yCount; row += 1) {
+      for (let column = -xCount; column <= xCount; column += 1) {
+        const rowOffset = Math.abs(row) % 2 === 1 ? horizontalSpacing / 2 : 0;
+        const baseX = column * horizontalSpacing + rowOffset + horizontalSpacing * layer.offsetScale;
+        const baseY = row * verticalSpacing;
+        const jitterX = settings.security.scramble
+          ? seededVariation(random, horizontalSpacing * 0.22)
+          : 0;
+        const jitterY = settings.security.scramble
+          ? seededVariation(random, verticalSpacing * 0.2)
+          : 0;
+        const rotation = settings.security.scramble ? seededVariation(random, 0.16) : 0;
+        const scale = settings.security.scramble ? 1 + seededVariation(random, 0.16) : 1;
+        const opacityVariation = settings.security.scramble
+          ? seededVariation(random, 0.08)
+          : 0;
+        const opacity = Math.max(
+          0.08,
+          Math.min(1, settings.opacity * layer.opacityScale + opacityVariation)
+        );
+        const canvasPoint = getCanvasPoint(
+          baseX + jitterX,
+          baseY + jitterY,
+          layer.angle,
+          width,
+          height
+        );
+        const luminance = sampleLuminance(
+          luminanceMap,
+          canvasPoint.x,
+          canvasPoint.y,
+          width,
+          height
+        );
+        const tile = luminance < 0.5 ? lightTile : darkTile;
 
-        const outFormat = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-        canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
-          else reject(new Error("Image Export Failed"));
-        }, outFormat, 0.95);
-      };
-      img.onerror = () => reject(new Error("Image Load Error"));
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+        context.save();
+        context.translate(baseX + jitterX, baseY + jitterY);
+        context.rotate(rotation);
+        context.scale(scale, scale);
+        context.globalAlpha = opacity;
+        context.drawImage(tile, -tile.width / 2, -tile.height / 2);
+        context.restore();
+      }
+    }
+
+    context.restore();
   });
 };
 
-export const convertImageToPdf = async (imageBlob: Blob, removeMetadata: boolean): Promise<Blob> => {
-    const pdfDoc = await PDFDocument.create();
-    
-    if (removeMetadata) {
-        pdfDoc.setTitle('');
-        pdfDoc.setAuthor('');
-        pdfDoc.setProducer('MetafiliX Secure Engine'); 
-        pdfDoc.setCreator('');
-        pdfDoc.setCreationDate(ZERO_DATE);
-        pdfDoc.setModificationDate(ZERO_DATE);
-    }
+const decodeImageBlob = async (blob: Blob): Promise<HTMLImageElement> => {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('Image illisible'));
+      image.src = url;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+};
 
-    const imageBytes = await imageBlob.arrayBuffer();
-    let image;
-    
-    if (imageBlob.type === 'image/png') {
-        image = await pdfDoc.embedPng(imageBytes);
-    } else {
-        image = await pdfDoc.embedJpg(imageBytes);
-    }
+export const watermarkImage = async (
+  file: File,
+  settings: WatermarkSettings,
+  seed: string
+): Promise<Blob> => {
+  const image = await decodeImageBlob(file);
+  let width = image.naturalWidth;
+  let height = image.naturalHeight;
 
-    const page = pdfDoc.addPage([image.width, image.height]);
-    page.drawImage(image, {
+  if (width > MAX_CANVAS_DIMENSION || height > MAX_CANVAS_DIMENSION) {
+    const ratio = Math.min(MAX_CANVAS_DIMENSION / width, MAX_CANVAS_DIMENSION / height);
+    width = Math.max(1, Math.floor(width * ratio));
+    height = Math.max(1, Math.floor(height * ratio));
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Contexte canvas indisponible');
+
+  context.drawImage(image, 0, 0, width, height);
+  drawSecureWatermarkOnCanvas(context, width, height, settings, seed);
+
+  const outputType = file.type === 'image/png'
+    ? 'image/png'
+    : file.type === 'image/webp'
+      ? 'image/webp'
+      : 'image/jpeg';
+  return canvasToBlob(canvas, outputType, 0.95);
+};
+
+const ensurePdfCompatibleImage = async (blob: Blob): Promise<Blob> => {
+  if (blob.type === 'image/png' || blob.type === 'image/jpeg') return blob;
+
+  const image = await decodeImageBlob(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Contexte canvas indisponible');
+  context.drawImage(image, 0, 0);
+  return canvasToBlob(canvas, 'image/jpeg', 0.95);
+};
+
+export const convertImageToPdf = async (
+  imageBlob: Blob,
+  removeMetadata: boolean
+): Promise<Blob> => {
+  const compatibleBlob = await ensurePdfCompatibleImage(imageBlob);
+  const pdfDoc = await PDFDocument.create();
+  applyMetadataPolicy(pdfDoc, removeMetadata);
+
+  const imageBytes = await compatibleBlob.arrayBuffer();
+  const image = compatibleBlob.type === 'image/png'
+    ? await pdfDoc.embedPng(imageBytes)
+    : await pdfDoc.embedJpg(imageBytes);
+  const page = pdfDoc.addPage([image.width, image.height]);
+  page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+
+  const pdfBytes = await pdfDoc.save();
+  return pdfBytesToBlob(pdfBytes);
+};
+
+const renderPdfPage = async (
+  pdfPage: any,
+  scale: number
+): Promise<HTMLCanvasElement> => {
+  const viewport = pdfPage.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Contexte canvas indisponible');
+  await pdfPage.render({ canvasContext: context, viewport }).promise;
+  return canvas;
+};
+
+const renderPdfLuminanceMap = async (pdfPage: any): Promise<LuminanceMap | null> => {
+  const viewport = pdfPage.getViewport({ scale: 1 });
+  const scale = LUMINANCE_MAP_SIZE / Math.max(viewport.width, viewport.height);
+  const canvas = await renderPdfPage(pdfPage, scale);
+  return createLuminanceMap(canvas, Math.max(1, canvas.width));
+};
+
+const watermarkPdfStandard = async (
+  file: File,
+  settings: WatermarkSettings,
+  seed: string
+): Promise<Blob> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const sourcePdf = await PDFDocument.load(arrayBuffer);
+  applyMetadataPolicy(sourcePdf, settings.removeMetadata);
+  const pdfJs = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+  const pages = sourcePdf.getPages();
+
+  try {
+    for (let index = 0; index < pages.length; index += 1) {
+      const pdfPage = await pdfJs.getPage(index + 1);
+      const page = pages[index];
+      const { width, height } = page.getSize();
+      const overlayScale = Math.min(2, MAX_CANVAS_DIMENSION / Math.max(width, height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(width * overlayScale));
+      canvas.height = Math.max(1, Math.floor(height * overlayScale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Contexte canvas indisponible');
+      const luminanceMap = await renderPdfLuminanceMap(pdfPage);
+
+      drawSecureWatermarkOnCanvas(
+        context,
+        canvas.width,
+        canvas.height,
+        settings,
+        `${seed}:page:${index + 1}`,
+        luminanceMap
+      );
+
+      const overlay = await canvasToBlob(canvas, 'image/png');
+      const embeddedOverlay = await sourcePdf.embedPng(await overlay.arrayBuffer());
+      page.drawImage(embeddedOverlay, { x: 0, y: 0, width, height });
+      pdfPage.cleanup();
+    }
+  } finally {
+    await pdfJs.destroy();
+  }
+
+  const pdfBytes = await sourcePdf.save();
+  return pdfBytesToBlob(pdfBytes);
+};
+
+const watermarkPdfReinforced = async (
+  file: File,
+  settings: WatermarkSettings,
+  seed: string
+): Promise<Blob> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfJs = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const newPdf = await PDFDocument.create();
+  applyMetadataPolicy(newPdf, settings.removeMetadata);
+
+  try {
+    for (let pageNumber = 1; pageNumber <= pdfJs.numPages; pageNumber += 1) {
+      const pdfPage = await pdfJs.getPage(pageNumber);
+      const naturalViewport = pdfPage.getViewport({ scale: 1 });
+      const renderScale = Math.min(
+        2,
+        MAX_CANVAS_DIMENSION / Math.max(naturalViewport.width, naturalViewport.height)
+      );
+      const canvas = await renderPdfPage(pdfPage, renderScale);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Contexte canvas indisponible');
+
+      drawSecureWatermarkOnCanvas(
+        context,
+        canvas.width,
+        canvas.height,
+        settings,
+        `${seed}:page:${pageNumber}`
+      );
+
+      const pageImage = await canvasToBlob(canvas, 'image/jpeg', 0.95);
+      const embeddedImage = await newPdf.embedJpg(await pageImage.arrayBuffer());
+      const newPage = newPdf.addPage([naturalViewport.width, naturalViewport.height]);
+      newPage.drawImage(embeddedImage, {
         x: 0,
         y: 0,
-        width: image.width,
-        height: image.height,
-    });
+        width: naturalViewport.width,
+        height: naturalViewport.height,
+      });
+      pdfPage.cleanup();
+    }
+  } finally {
+    await pdfJs.destroy();
+  }
 
-    const pdfBytes = await pdfDoc.save();
-    return new Blob([pdfBytes], { type: 'application/pdf' });
+  const pdfBytes = await newPdf.save();
+  return pdfBytesToBlob(pdfBytes);
 };
 
-export const watermarkPdf = async (file: File, settings: WatermarkSettings): Promise<Blob> => {
-    const arrayBuffer = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdf = await loadingTask.promise;
-    
-    const newPdf = await PDFDocument.create();
-
-    if (settings.removeMetadata) {
-        newPdf.setTitle('');
-        newPdf.setAuthor('');
-        newPdf.setProducer('MetafiliX');
-        newPdf.setCreator('');
-        newPdf.setCreationDate(ZERO_DATE);
-        newPdf.setModificationDate(ZERO_DATE);
-    }
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const scale = 2.0; 
-        
-        const pageImageBlob = await rasterizePdfPageToBlob(page, scale, settings);
-        const pageImageBytes = await pageImageBlob.arrayBuffer();
-        
-        const embeddedImage = await newPdf.embedJpg(pageImageBytes);
-        
-        const newPage = newPdf.addPage([embeddedImage.width, embeddedImage.height]);
-        newPage.drawImage(embeddedImage, {
-            x: 0,
-            y: 0,
-            width: embeddedImage.width,
-            height: embeddedImage.height
-        });
-        
-        page.cleanup();
-    }
-    
-    const pdfBytes = await newPdf.save();
-    return new Blob([pdfBytes], { type: 'application/pdf' });
-};
+export const watermarkPdf = async (
+  file: File,
+  settings: WatermarkSettings,
+  seed: string
+): Promise<Blob> => settings.security.rasterize
+  ? watermarkPdfReinforced(file, settings, seed)
+  : watermarkPdfStandard(file, settings, seed);
