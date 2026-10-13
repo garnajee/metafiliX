@@ -3,6 +3,7 @@ import {
   computeWatermarkTextLayout,
   createSeededRandom,
   MAX_WATERMARK_TEXT_LENGTH,
+  WATERMARK_ANGLE_RADIANS,
   wrapWatermarkText,
 } from './watermarkLayout';
 
@@ -56,5 +57,9 @@ describe('watermark text layout', () => {
     const firstValues = [first(), first(), first()];
     expect([second(), second(), second()]).toEqual(firstValues);
     expect([third(), third(), third()]).not.toEqual(firstValues);
+  });
+
+  it('keeps every watermark line on the same -45 degree diagonal', () => {
+    expect(WATERMARK_ANGLE_RADIANS).toBe(-Math.PI / 4);
   });
 });

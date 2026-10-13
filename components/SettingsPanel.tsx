@@ -166,38 +166,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange, disab
               Protection avancée
             </h3>
 
-            <div>
-              <span className="block text-sm font-medium text-slate-800 dark:text-slate-200 mb-2">Mode PDF</span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Mode de protection PDF">
-                <button
-                  type="button"
-                  onClick={() => handleSecurityChange('rasterize', false)}
-                  disabled={disabled}
-                  aria-pressed={!settings.security.rasterize}
-                  className={`p-3 rounded-lg border text-left transition-colors ${
-                    !settings.security.rasterize
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800'
-                  }`}
-                >
-                  <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Standard</span>
-                  <span className="block text-xs text-slate-500 dark:text-slate-400 mt-1">Conserve le texte sélectionnable.</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSecurityChange('rasterize', true)}
-                  disabled={disabled}
-                  aria-pressed={settings.security.rasterize}
-                  className={`p-3 rounded-lg border text-left transition-colors ${
-                    settings.security.rasterize
-                      ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800'
-                  }`}
-                >
-                  <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Renforcé</span>
-                  <span className="block text-xs text-slate-500 dark:text-slate-400 mt-1">Fusionne la page et le filigrane.</span>
-                </button>
-              </div>
+            <div className="rounded-lg border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-900/20 p-3">
+              <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">PDF toujours fusionné</span>
+              <span className="block text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                Chaque page PDF est transformée en image avec son filigrane. Le filigrane ne reste jamais un objet sélectionnable séparément.
+              </span>
             </div>
 
             <label className="flex items-start gap-3 cursor-pointer group">
@@ -229,7 +202,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange, disab
                   <Shuffle className="w-3.5 h-3.5" /> Variations adaptatives
                 </span>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Varie légèrement le motif pour rendre les traitements automatiques en série plus difficiles.
+                  Varie légèrement la position, l’échelle et l’opacité tout en gardant toutes les lignes strictement parallèles.
                 </p>
               </div>
             </label>

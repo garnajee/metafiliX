@@ -5,6 +5,7 @@ import {
   computeWatermarkTextLayout,
   createSeededRandom,
   seededVariation,
+  WATERMARK_ANGLE_RADIANS,
   WatermarkTextLayout,
 } from './watermarkLayout';
 
@@ -20,7 +21,6 @@ export interface LuminanceMap {
 }
 
 interface WatermarkLayer {
-  angle: number;
   fontScale: number;
   opacityScale: number;
   spacingScale: number;
@@ -28,8 +28,8 @@ interface WatermarkLayer {
 }
 
 const WATERMARK_LAYERS: WatermarkLayer[] = [
-  { angle: -Math.PI / 4, fontScale: 1, opacityScale: 1, spacingScale: 1, offsetScale: 0 },
-  { angle: -Math.PI / 7, fontScale: 0.72, opacityScale: 0.52, spacingScale: 1.3, offsetScale: 0.55 },
+  { fontScale: 1, opacityScale: 1, spacingScale: 1, offsetScale: 0 },
+  { fontScale: 0.72, opacityScale: 0.52, spacingScale: 1.3, offsetScale: 0.55 },
 ];
 
 const applyMetadataPolicy = (pdfDoc: PDFDocument, removeMetadata: boolean) => {
@@ -211,7 +211,7 @@ export const drawSecureWatermarkOnCanvas = (
 
     context.save();
     context.translate(width / 2, height / 2);
-    context.rotate(layer.angle);
+    context.rotate(WATERMARK_ANGLE_RADIANS);
     context.globalCompositeOperation = 'source-over';
 
     for (let row = -yCount; row <= yCount; row += 1) {
@@ -225,7 +225,6 @@ export const drawSecureWatermarkOnCanvas = (
         const jitterY = settings.security.scramble
           ? seededVariation(random, verticalSpacing * 0.2)
           : 0;
-        const rotation = settings.security.scramble ? seededVariation(random, 0.16) : 0;
         const scale = settings.security.scramble ? 1 + seededVariation(random, 0.16) : 1;
         const opacityVariation = settings.security.scramble
           ? seededVariation(random, 0.08)
@@ -237,7 +236,7 @@ export const drawSecureWatermarkOnCanvas = (
         const canvasPoint = getCanvasPoint(
           baseX + jitterX,
           baseY + jitterY,
-          layer.angle,
+          WATERMARK_ANGLE_RADIANS,
           width,
           height
         );
@@ -252,7 +251,6 @@ export const drawSecureWatermarkOnCanvas = (
 
         context.save();
         context.translate(baseX + jitterX, baseY + jitterY);
-        context.rotate(rotation);
         context.scale(scale, scale);
         context.globalAlpha = opacity;
         context.drawImage(tile, -tile.width / 2, -tile.height / 2);
@@ -357,60 +355,7 @@ const renderPdfPage = async (
   return canvas;
 };
 
-const renderPdfLuminanceMap = async (pdfPage: any): Promise<LuminanceMap | null> => {
-  const viewport = pdfPage.getViewport({ scale: 1 });
-  const scale = LUMINANCE_MAP_SIZE / Math.max(viewport.width, viewport.height);
-  const canvas = await renderPdfPage(pdfPage, scale);
-  return createLuminanceMap(canvas, Math.max(1, canvas.width));
-};
-
-const watermarkPdfStandard = async (
-  file: File,
-  settings: WatermarkSettings,
-  seed: string
-): Promise<Blob> => {
-  const arrayBuffer = await file.arrayBuffer();
-  const sourcePdf = await PDFDocument.load(arrayBuffer);
-  applyMetadataPolicy(sourcePdf, settings.removeMetadata);
-  const pdfJs = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
-  const pages = sourcePdf.getPages();
-
-  try {
-    for (let index = 0; index < pages.length; index += 1) {
-      const pdfPage = await pdfJs.getPage(index + 1);
-      const page = pages[index];
-      const { width, height } = page.getSize();
-      const overlayScale = Math.min(2, MAX_CANVAS_DIMENSION / Math.max(width, height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(width * overlayScale));
-      canvas.height = Math.max(1, Math.floor(height * overlayScale));
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Contexte canvas indisponible');
-      const luminanceMap = await renderPdfLuminanceMap(pdfPage);
-
-      drawSecureWatermarkOnCanvas(
-        context,
-        canvas.width,
-        canvas.height,
-        settings,
-        `${seed}:page:${index + 1}`,
-        luminanceMap
-      );
-
-      const overlay = await canvasToBlob(canvas, 'image/png');
-      const embeddedOverlay = await sourcePdf.embedPng(await overlay.arrayBuffer());
-      page.drawImage(embeddedOverlay, { x: 0, y: 0, width, height });
-      pdfPage.cleanup();
-    }
-  } finally {
-    await pdfJs.destroy();
-  }
-
-  const pdfBytes = await sourcePdf.save();
-  return pdfBytesToBlob(pdfBytes);
-};
-
-const watermarkPdfReinforced = async (
+const watermarkPdfFused = async (
   file: File,
   settings: WatermarkSettings,
   seed: string
@@ -463,6 +408,4 @@ export const watermarkPdf = async (
   file: File,
   settings: WatermarkSettings,
   seed: string
-): Promise<Blob> => settings.security.rasterize
-  ? watermarkPdfReinforced(file, settings, seed)
-  : watermarkPdfStandard(file, settings, seed);
+): Promise<Blob> => watermarkPdfFused(file, settings, seed);

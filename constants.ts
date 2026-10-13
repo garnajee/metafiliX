@@ -8,7 +8,6 @@ export const DEFAULT_SETTINGS: WatermarkSettings = {
   outputFormat: 'original',
   removeMetadata: true,
   security: {
-    rasterize: true,
     addNoise: true,
     scramble: true
   }

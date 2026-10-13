@@ -10,7 +10,7 @@
 
 <p align="center">
   <b>MetafiliX</b> is a web app designed to add watermarks on PDF and images (for now). Anti-AI secuirty features.<br/>
-  MetafiliX can preserve selectable PDF text in Standard mode or fuse the watermark into page pixels in Reinforced mode. These techniques increase deterrence and make automated removal more difficult without claiming that any watermark is impossible to remove.
+  MetafiliX fuses each PDF page and its watermark into one raster image. The watermark is no longer a separate selectable object. These techniques increase deterrence and make automated removal more difficult without claiming that any watermark is impossible to remove.
 </p>
 
 </div>
@@ -31,16 +31,15 @@
 
 This is where MetafiliX stands out. I employ a **"Defense in Depth"** strategy to protect your documents.
 
-### 1. Optional Rasterization (Reinforced Mode)
+### 1. Mandatory PDF Rasterization
 Standard vector watermarks (added by Adobe Acrobat or basic libraries) are distinct layers. A single click is enough to delete them.
-*   **Standard mode:** Keeps the original PDF content and selectable text, then adds a graphical watermark layer.
-*   **Reinforced mode:** Converts every page into a high-resolution image and burns the watermark into the resulting pixels.
+*   **PDF pipeline:** Converts every page into a high-resolution image and burns the watermark into the resulting pixels before rebuilding the PDF.
 
 ### 2. Anti-AI & Anti-Inpainting Strategies
 AI tools attempt to reconstruct the image underneath the watermark by analyzing patterns and uniform colors. I try to destroy this capability:
 
 *   **Multi-scale pattern:** Two interleaved watermark grids make one-pass masking less effective.
-*   **Per-file variation:** Position, angle, scale and opacity use a unique seed for every uploaded file and page.
+*   **Per-file variation:** Position, scale and opacity use a unique seed for every uploaded file and page while all text remains parallel at a fixed −45° angle.
 *   **Adaptive contrast:** Light or dark outlines are selected from local document luminance.
 *   **Glyph texture:** Cross-hatching is clipped to the letters instead of degrading the entire source image.
 *   **Readable layout:** Long phrases are wrapped and resized automatically without clipping words.
@@ -100,7 +99,7 @@ The application will be accessible at `http://localhost:3000`.
 
 ## ⚠️ Legal Disclaimer
 
-No visible watermark is invulnerable to a determined editor or modern inpainting system. MetafiliX provides local processing, visible deterrence and a reinforced raster mode; it does not guarantee that removal is impossible.
+No visible watermark is invulnerable to a determined editor or modern inpainting system. MetafiliX provides local processing, visible deterrence and mandatory PDF rasterization; it does not guarantee that removal is impossible.
 
 ## License
 

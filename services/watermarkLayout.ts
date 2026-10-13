@@ -1,4 +1,5 @@
 export const MAX_WATERMARK_TEXT_LENGTH = 120;
+export const WATERMARK_ANGLE_RADIANS = -Math.PI / 4;
 
 export interface TextMeasurement {
   width: number;

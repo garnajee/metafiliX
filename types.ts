@@ -13,7 +13,6 @@ export interface ProcessedFile {
 export type OutputFormat = 'original' | 'pdf';
 
 export interface SecuritySettings {
-  rasterize: boolean; // Reinforced PDF mode: rasterizes every page.
   addNoise: boolean;  // Adds structured texture inside watermark glyphs.
   scramble: boolean;  // Enables seeded geometric variations.
 }
